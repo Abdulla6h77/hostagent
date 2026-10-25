@@ -1,0 +1,17 @@
+node_modules/
+.next/
+.git/
+.local/
+.vercel/
+.qodo/
+.turbo/
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+*service-account*.json
+*.log
+coverage/
+test-results/

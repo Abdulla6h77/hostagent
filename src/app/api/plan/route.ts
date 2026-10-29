@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildPlan } from "@/lib/orchestrator";
 import { PlanRequestSchema } from "@/lib/validation";
+import { authorizeLiveVisitor, LiveAccessError } from "@/lib/live-protection";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -28,6 +29,15 @@ export async function POST(request: Request) {
   } catch { return NextResponse.json({ error: "Send valid JSON." }, { status: 400, headers }); }
   const parsed = PlanRequestSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Check guest names and add 3–5 different tastes per guest.", details: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) }, { status: 400, headers });
+  // Offline modes and disabled/unconfigured Qloo never depend on Redis or identity headers.
+  if (parsed.data.useQloo && !parsed.data.sampleOnly && process.env.QLOO_LIVE_ENABLED === "true" && process.env.QLOO_API_KEY?.trim()) {
+    try { await authorizeLiveVisitor(request); }
+    catch (error) {
+      const limited = error instanceof LiveAccessError && error.code === "visitor-limit";
+      const responseHeaders = limited && error.retryAfter ? { ...headers, "Retry-After": String(error.retryAfter) } : headers;
+      return NextResponse.json({ error: limited ? "LIVE request limit reached. Please wait or choose SAMPLE ideas." : "LIVE planning is unavailable. Choose SAMPLE ideas or the generic plan.", code: limited ? "LIVE_RATE_LIMITED" : "LIVE_UNAVAILABLE" }, { status: limited ? 429 : 503, headers: responseHeaders });
+    }
+  }
   try {
     const { guests, ...options } = parsed.data;
     return NextResponse.json(await buildPlan(guests, options), { headers });

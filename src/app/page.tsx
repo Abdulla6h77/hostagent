@@ -5,6 +5,8 @@ import { ArrowDown, ArrowRight, Check, ChefHat, Clapperboard, Disc3, LoaderCircl
 import type { Domain, DomainPlan, Guest, PlanResponse } from "@/types";
 import { PlanRequestSchema, type PlanRequest } from "@/lib/validation";
 import { requestPlan } from "@/lib/plan-request";
+import { SOURCE_LABELS, evidenceLabel, explainRecommendation, individualEvidence } from "@/lib/recommendation-explanations";
+import { GroupEvidenceSummary, UnresolvedTastes } from "@/components/result-evidence";
 
 const SAMPLE: Guest[] = [
   { name: "Aisha", seeds: ["jazz", "ramen", "Studio Ghibli", "vintage denim"] },
@@ -14,12 +16,12 @@ const SAMPLE: Guest[] = [
 ];
 const ICONS = { music: Disc3, food: ChefHat, film: Clapperboard, vibe: Sparkles };
 const NUMBERS: Record<Domain, string> = { music: "01", food: "02", film: "03", vibe: "04" };
-const LABELS = { qloo: "LIVE", sample: "SAMPLE", baseline: "BASELINE" };
+const LABELS = SOURCE_LABELS;
 
 interface DraftGuest extends Guest { id: number }
 
-function GuestCard({ guest, index, onChange, onRemove, canRemove, nameError, tasteError }: {
-  guest: DraftGuest; index: number; onChange: (guest: DraftGuest) => void; onRemove: () => void; canRemove: boolean; nameError?: string; tasteError?: string;
+function GuestCard({ guest, index, onChange, onRemove, canRemove, nameError, tasteError, unresolved = [] }: {
+  guest: DraftGuest; index: number; onChange: (guest: DraftGuest) => void; onRemove: () => void; canRemove: boolean; nameError?: string; tasteError?: string; unresolved?: string[];
 }) {
   const id = useId();
   const [seed, setSeed] = useState("");
@@ -31,7 +33,7 @@ function GuestCard({ guest, index, onChange, onRemove, canRemove, nameError, tas
     if (guest.seeds.some((s) => s.toLowerCase() === value.toLowerCase())) { setError("That taste is already on the list."); return; }
     onChange({ ...guest, seeds: [...guest.seeds, value] }); setSeed(""); setError("");
   }
-  return <article className="guest-card">
+  return <article className="guest-card" data-guest-name={guest.name.trim()}>
     <div className="guest-heading"><span className="guest-number">GUEST {String(index + 1).padStart(2, "0")}</span>
       <button className="icon-button" type="button" disabled={!canRemove} onClick={onRemove} aria-label={`Remove guest ${index + 1}`}><X size={16} /></button>
     </div>
@@ -41,7 +43,7 @@ function GuestCard({ guest, index, onChange, onRemove, canRemove, nameError, tas
     <p className="field-error" id={`${id}-name-error`}>{nameError}</p>
     <label className="seed-label" htmlFor={`${id}-taste`}>Their tastes <span>{guest.seeds.length}/5</span></label>
     <div className="chips" aria-label={`Tastes for ${guest.name || `guest ${index + 1}`}`}>
-      {guest.seeds.map((taste) => <span className="chip" key={taste}>{taste}<button type="button" aria-label={`Remove ${taste} from guest ${index + 1}`}
+      {guest.seeds.map((taste) => <span className={`chip ${unresolved.some((seed) => seed.toLowerCase() === taste.toLowerCase()) ? "chip-unresolved" : ""}`} key={taste}>{taste}<button type="button" aria-label={`Remove ${taste} from guest ${index + 1}`}
         onClick={() => onChange({ ...guest, seeds: guest.seeds.filter((s) => s !== taste) })}><X size={12} /></button></span>)}
     </div>
     <div className="seed-entry"><input id={`${id}-taste`} value={seed} maxLength={100} disabled={guest.seeds.length >= 5}
@@ -50,6 +52,7 @@ function GuestCard({ guest, index, onChange, onRemove, canRemove, nameError, tas
       <button type="button" className="icon-button" onClick={addSeed} disabled={!seed.trim() || guest.seeds.length >= 5} aria-label={`Add taste for guest ${index + 1}`}><Plus size={17} /></button>
     </div>
     <p className="hint" id={`${id}-hint`}>3–5 tastes · Enter or + to add</p>
+    {unresolved.length > 0 && <p className="hint unresolved-hint">Marked tastes were not resolved for Qloo in the displayed plan. Replace a chip and plan again.</p>}
     <p className="field-error" id={`${id}-error`} role={error ? "alert" : undefined}>{error || tasteError}</p>
   </article>;
 }
@@ -62,15 +65,17 @@ function DomainCard({ plan, baseline, reduceMotion }: { plan: DomainPlan; baseli
   const Icon = ICONS[plan.domain];
   return <motion.article className={`domain-card domain-${plan.domain}`} initial={reduceMotion ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
     <div className="domain-heading"><span className="domain-icon"><Icon size={21} /></span><h3>{plan.headline}</h3><SourceBadge source={plan.source} /></div>
-    {plan.reason && <p className="domain-reason">{plan.reason}</p>}
+    {plan.source !== "qloo" && plan.reason && <p className="domain-reason">{plan.reason}</p>}
+    {plan.source === "qloo" && plan.coverage && <p className="domain-reason">Verified representation: {plan.coverage.representedGuests.length} {plan.coverage.representedGuests.length === 1 ? "guest" : "guests"} across these picks. <span>Coverage is not unanimous agreement.</span></p>}
     <div className={baseline ? "comparison-grid" : ""}>
       <div>{baseline && <p className="column-label">YOUR GROUP · {LABELS[plan.source]}</p>}
         {plan.picks.map((pick, index) => <div key={`${pick.entityId ?? pick.title}-${index}`} className={`pick ${index === 0 ? "top-pick" : ""}`}>
           <div className="pick-topline"><span>{index === 0 ? "THE FIRST PICK" : `ALTERNATIVE ${index}`}</span>
             {pick.support && <span className="support-count">{pick.support.checked === 0 ? "Support not checked" : `${pick.support.count}/${pick.support.total} ${pick.support.kind === "synthetic-keyword" ? "keyword matches" : "guest result sets"}`}</span>}
           </div>
-          <h4>{pick.title}</h4><p className="subtitle">{pick.subtitle}</p><p className="why">{pick.why}</p>
-          {pick.bridgingGuests.length > 0 && <div className="guest-badges">{pick.bridgingGuests.map((name) => <span key={name}><Check size={11} />{name}</span>)}</div>}
+          <h4>{pick.title}</h4><p className="subtitle">{pick.subtitle.startsWith("urn:") ? "Qloo recommendation" : pick.subtitle}</p><p className="why">{explainRecommendation(pick, plan.source)}</p>
+          <details className="pick-evidence"><summary>How this was chosen</summary><p>{pick.why}</p>{individualEvidence(pick, plan.source).length > 0 && <ul>{individualEvidence(pick, plan.source).map((evidence) => <li key={evidence.guest}><strong>{evidence.guest}</strong>: {evidenceLabel(evidence.state)}</li>)}</ul>}{plan.source === "qloo" && plan.reason && <p>{plan.reason}</p>}</details>
+          {individualEvidence(pick, plan.source).some((e) => e.state === "supported") && <div className="guest-badges">{individualEvidence(pick, plan.source).filter((e) => e.state === "supported").map((e) => e.guest).map((name) => <span key={name}><Check size={11} />{name}</span>)}</div>}
         </div>)}
       </div>
       {baseline && <aside className="baseline-column"><p className="column-label">WITHOUT QLOO · BASELINE</p><SourceBadge source="baseline" />
@@ -123,6 +128,12 @@ export default function Home() {
       target?.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "center" });
       target?.focus({ preventScroll: true });
     });
+  }
+  function editGuestTastes(name: string) {
+    const cards = Array.from(formRef.current?.querySelectorAll<HTMLElement>(".guest-card") ?? []);
+    const card = cards.find((element) => element.dataset.guestName === name);
+    const target = card?.querySelector<HTMLElement>(".chip-unresolved button") ?? card?.querySelector<HTMLElement>(".seed-entry input:not(:disabled)") ?? formRef.current?.querySelector<HTMLElement>(".name-input");
+    target?.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "center" }); target?.focus({ preventScroll: true });
   }
   async function generate(useQloo: boolean, override?: PlanRequest) {
     if (inFlight.current) return;
@@ -189,8 +200,8 @@ export default function Home() {
       <form ref={formRef} noValidate onSubmit={(e) => { e.preventDefault(); void generate(true); }}>
         <fieldset disabled={busy || comparing} className="planner-fieldset"><legend className="sr-only">Party guests and context</legend>
           <label className="demo-choice"><input type="checkbox" checked={sampleOnly} onChange={(e) => setSampleOnly(e.target.checked)} />Use SAMPLE demo — curated ideas, no live requests</label>
-          {error && <div ref={errorRef} tabIndex={-1} className="error-banner" role="alert"><p>{error}</p><button type="button" className="text-button" onClick={() => void generate(false)}>Try the generic plan</button></div>}
-          <div className={`guest-grid guest-count-${guests.length}`}>{guests.map((guest, index) => <GuestCard key={guest.id} guest={guest} index={index} canRemove={guests.length > 2} nameError={fieldErrors[`guests.${index}.name`]} tasteError={fieldErrors[`guests.${index}.seeds`]}
+          {error && <div ref={errorRef} tabIndex={-1} className="error-banner" role="alert"><p>{error}</p><div className="action-buttons"><button type="button" className="text-button" onClick={() => { setSampleOnly(true); void generate(true, { ...input, sampleOnly: true }); }}>Use SAMPLE ideas</button><button type="button" className="text-button" onClick={() => void generate(false)}>Try the generic plan</button></div></div>}
+          <div className={`guest-grid guest-count-${guests.length}`}>{guests.map((guest, index) => <GuestCard key={guest.id} guest={guest} index={index} canRemove={guests.length > 2} unresolved={plan?.unresolvedSeeds.find((item) => item.guest === guest.name.trim())?.seeds.filter((seed) => guest.seeds.some((taste) => taste.toLowerCase() === seed.toLowerCase())) ?? []} nameError={fieldErrors[`guests.${index}.name`]} tasteError={fieldErrors[`guests.${index}.seeds`]}
             onRemove={() => { setGuests(guests.filter((g) => g.id !== guest.id)); setFieldErrors({}); setError(""); }} onChange={(updated) => { setGuests(guests.map((g) => g.id === updated.id ? updated : g)); setFieldErrors({}); setError(""); }} />)}</div>
           <div className="add-row"><button className="text-button" type="button" disabled={guests.length >= 4} onClick={() => { setGuests([...guests, { id: nextId.current++, name: "", seeds: [] }]); setFieldErrors({}); setError(""); }}><Plus size={16} />Add a guest</button><span>{guests.length} guests · up to 4</span></div>
           <div className="context-row"><div><label htmlFor="occasion">The occasion <span>optional</span></label><input id="occasion" value={occasion} maxLength={100} placeholder="Friday dinner, birthday, just because…" onChange={(e) => setOccasion(e.target.value)} /></div>
@@ -204,8 +215,10 @@ export default function Home() {
       {plan && <section aria-busy={busy} ref={resultsRef} tabIndex={-1} id="results" className="results-section" aria-labelledby="results-title">
         <div className="section-intro"><div><p className="eyebrow">02 / YOUR COMMON GROUND</p><h2 id="results-title">A night to make your own.</h2><p>{snapshot?.occasion ? `For ${snapshot.occasion} · ` : ""}{snapshot?.guests.map((g) => g.name).join(", ")}</p></div><div className="result-meta"><SourceBadge source={plan.mode} /><details className="call-chip"><summary>Technical details</summary>{requestCount} Qloo HTTP attempts · {cacheHits} cache hits</details></div></div>
         {busy && <p className="stale-note">Updating your plan. The previous result remains below.</p>}
+        <GroupEvidenceSummary plan={plan} guestNames={snapshot?.guests.map((guest) => guest.name) ?? []} />
+        <UnresolvedTastes plan={plan} disabled={busy || comparing} onEditGuest={editGuestTastes} />
         <div className="transparency"><p>{plan.mode === "sample" ? "SAMPLE includes synthetic ideas. Individual domains may retain real Qloo results; their source labels show which." : plan.mode === "baseline" ? "BASELINE is a fixed generic plan. No taste personalization or Qloo requests." : "LIVE picks come from Qloo. Support counts show retrieval overlap, not affinity probabilities."} No affinity percentages are inferred.</p>
-          {plan.warnings.length > 0 && <details><summary>Planning notes ({plan.warnings.length})</summary><ul>{plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>{plan.unresolvedSeeds.map((item) => <p key={item.guest}>Unresolved for {item.guest}: {item.seeds.join(", ")}</p>)}</details>}
+          {plan.warnings.length > 0 && <details><summary>Planning notes ({plan.warnings.length})</summary><ul>{plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
         </div>
         {stale && <p className="stale-note" role="status">Your guest list has changed. This plan and its comparison use the previous guest list. Plan again to update.</p>}
         {plan.mode !== "baseline" && <div className="compare-bar"><div><strong>What changes without Qloo?</strong><p>Compare this exact guest list with a fixed generic plan.{plan.mode === "sample" ? " This is a SAMPLE comparison, not proof of Qloo performance." : ""}</p></div><button type="button" role="switch" aria-checked={compare} aria-controls="domain-results" className={`compare-switch ${compare ? "on" : ""}`} disabled={comparing || busy} onClick={() => void toggleCompare()}><span className="switch-track"><span /></span>{comparing ? "Loading comparison…" : "Compare: without Qloo"}</button></div>}

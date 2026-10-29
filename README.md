@@ -47,6 +47,18 @@ The credential previously exposed in original project notes requires manual revo
 
 Genre and cuisine tags and exact entity-name matches resolve taste seeds. Primary insights run with at most two concurrent requests and staggered starts. Lookups allow 10 seconds, insights 20 seconds, within a 45-second planner deadline. Individual support checks follow all primary requests if budget allows. Retrieval overlap is not an affinity probability; unchecked guests are not attributed. The explicit SAMPLE demo bypasses live requests even when credentials are configured. City and occasion are context only; venue location, dietary suitability, and availability are not verified.
 
+## Group coverage
+
+For each LIVE domain, the planner keeps the existing group candidate pool and individual retrieval checks. It selects up to three picks that maximize the number of guests with verified individual retrieval support across the selected set. Equal-coverage sets use the existing candidate ranking lexicographically; displayed picks retain that order. This adds no Qloo calls.
+
+Per-pick evidence distinguishes supported, checked but not retrieved, and unchecked. Domain notes identify guests without a supporting pool candidate, guests whose checks were unavailable, and exclusions forced by the three-pick limit. Coverage is not affinity, dislike, unanimous consensus, or support for unresolved inputs. With no individual evidence, the original ranked selection remains unchanged. SAMPLE and BASELINE recommendations are not assigned verified coverage.
+
+## Reading the evidence
+
+Results show unique guests with verified representation across selected LIVE recommendations. SAMPLE keyword matches and BASELINE ideas do not count. Incomplete individual checks remain explicit; coverage is not affinity or unanimous agreement. Short explanations lead each card, while “How this was chosen” retains technical evidence and per-guest checked/unchecked states.
+
+Unresolved tastes appear outside collapsed planning notes. They were not used as Qloo taste signals in that run; curated SAMPLE ideas can still use keyword matches. Category-based suggestions are unverified examples, generated locally without API calls. Edit a guest’s taste chips and regenerate to retry resolution; the displayed plan keeps its original guest snapshot until then.
+
 ## Project structure
 
 - `src/app`: responsive frontend and production API routes.
@@ -63,7 +75,7 @@ Publish application source, tests, scripts, configs, lockfile, README, LICENSE, 
 
 Before committing, inspect `git status --short` and `git diff --cached --name-only`. Never stage `.env`, `.env.local`, `.local`, keys, logs, or caches. This folder has not been initialized as a Git repository by this cleanup. Confirm the remote destination before pushing; do not overwrite existing remote history.
 
-Vercel deployment is not configured or verified. The Node route exports a 60-second maximum duration for a 45-second planner, but hosted limits require verification. Public LIVE access still needs distributed quota/rate protection and production secret setup. Keep LIVE disabled until those controls are ready.
+A Vercel deployment is reported by the owner; this local revision has not been deployed or verified there. The Node route exports a 60-second maximum duration for a 45-second planner, but hosted limits require verification. Server-side shared-budget and visitor protection is implemented but requires manually provisioned Upstash configuration and storage-only verification. Keep LIVE disabled until those controls are ready. See [LIVE protection setup and rollback](docs/LIVE-PROTECTION.md).
 
 ## License
 

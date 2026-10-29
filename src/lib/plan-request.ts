@@ -7,11 +7,12 @@ const source = z.enum(["qloo", "sample", "baseline"]);
 const pick = z.object({
   title: z.string(), subtitle: z.string(), why: z.string(), affinity: z.number().nullable(),
   bridgingGuests: z.array(z.string()), entityId: z.string().optional(),
+  guestEvidence: z.array(z.object({ guest: z.string(), state: z.enum(["supported", "checked-not-retrieved", "unchecked"]) })).optional(),
   support: z.object({ kind: z.enum(["qloo-retrieval", "synthetic-keyword"]), count: z.number(), total: z.number(), checked: z.number().optional(), rankScore: z.number() }).optional(),
 });
 export const PlanResponseSchema = z.object({
   mode: source,
-  domains: z.array(z.object({ domain, headline: z.string(), source, reason: z.string().optional(), picks: z.array(pick).min(1) })).length(4).refine((items) => new Set(items.map((item) => item.domain)).size === 4),
+  domains: z.array(z.object({ domain, headline: z.string(), source, reason: z.string().optional(), coverage: z.object({ representedGuests: z.array(z.string()), checkedWithoutCandidateGuests: z.array(z.string()), uncheckedGuests: z.array(z.string()), unselectedGuests: z.array(z.string()) }).optional(), picks: z.array(pick).min(1) })).length(4).refine((items) => new Set(items.map((item) => item.domain)).size === 4),
   warnings: z.array(z.string()), unresolvedSeeds: z.array(z.object({ guest: z.string(), seeds: z.array(z.string()) })),
   qlooCalls: z.array(z.object({ endpoint: z.string(), count: z.number(), cacheHits: z.number() })),
   generatedAt: z.string(), context: z.object({ occasion: z.string().optional(), city: z.string().optional() }),
@@ -37,7 +38,8 @@ export async function requestPlan(input: PlanRequest, signal?: AbortSignal): Pro
       const messages: Record<number, string> = {
         400: "Check each guest has a name and 3–5 different tastes, then try again.",
         413: "This guest list is too large. Shorten the details and try again.",
-        429: "Too many requests right now. Wait a moment before trying again, or use the generic plan.",
+        503: input.useQloo && !input.sampleOnly ? "LIVE planning is temporarily unavailable. Choose SAMPLE ideas or the generic plan." : "Planning is temporarily unavailable. Your details are saved. Please try again.",
+        429: "LIVE request limit reached. Wait before trying again, or choose SAMPLE ideas or the generic plan.",
       };
       throw new Error(messages[response.status] ?? "The planning service couldn't finish. Your details are saved. Try again or use the generic plan.");
     }

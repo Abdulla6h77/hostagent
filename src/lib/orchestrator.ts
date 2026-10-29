@@ -2,6 +2,7 @@ import { createQlooClient, QlooError, wait, type Entity, type QlooClient, type I
 import { BASELINE_PLAN, DOMAINS, getMockPlan, HEADLINES } from "./mock";
 import { isDiningTag } from "./qloo-contract";
 import { classifySeed, selectTasteTag } from "./taste-seeds";
+import { describeCoverage, selectGroupCoverage } from "./group-coverage";
 import type { Domain, DomainPlan, Guest, Pick, PlanResponse, QlooCall } from "@/types";
 
 const TYPES: Record<Domain, string> = { music: "urn:entity:artist", food: "urn:entity:place", film: "urn:entity:movie", vibe: "urn:entity:brand" };
@@ -22,6 +23,8 @@ function failureReason(error: unknown) {
       network: "Qloo could not be reached.", "rate-limit": "Qloo rate limit reached.", upstream: "Qloo rejected the request or is unavailable.",
       contract: "Qloo returned an unexpected response format.", configuration: "Qloo server configuration needs attention.",
       budget: "The Qloo HTTP-attempt budget for this plan was reached.",
+      "shared-budget": "LIVE planning has reached the shared application allowance. Showing SAMPLE ideas where needed.",
+      "live-unavailable": "LIVE access is temporarily unavailable. Try SAMPLE ideas or the generic plan.",
     };
     return reasons[error.code];
   }
@@ -77,8 +80,10 @@ export async function buildPlan(
     const allIds = forGuests(guests, "entity");
     const musicTags = forGuests(guests, "music-tag");
     let cuisineTags = forGuests(guests, "cuisine-tag");
+    const accessFailure = client.liveAccessFailure?.();
+    if (accessFailure) warnings.push(failureReason(new QlooError(accessFailure)));
     if (unresolvedSeeds.length) warnings.push("Some seeds could not be resolved exactly. Qloo uses only resolved entities and genre tags; cuisine tags constrain food. Unresolved inputs are not attributed.");
-    if (!allIds.length && !musicTags.length) return { ...base, resolutionCoverage, unresolvedSeeds, mode: "sample", domains: getMockPlan(guests, "No exact Qloo taste signals were available."), warnings: ["No taste signals resolved. Showing synthetic ideas.", ...warnings] };
+    if (!allIds.length && !musicTags.length) return { ...base, resolutionCoverage, unresolvedSeeds, mode: "sample", domains: getMockPlan(guests, accessFailure ? failureReason(new QlooError(accessFailure)) : "No exact Qloo taste signals were available."), warnings: ["No taste signals resolved. Showing synthetic ideas.", ...warnings] };
     const spacing = dependencies.spacingMs ?? 300;
     const domains: DomainPlan[] = [];
     const primary = new Map<Domain, { candidates: Entity[]; filterType: string; tags: string[] }>();
@@ -131,7 +136,7 @@ export async function buildPlan(
           } catch { warnings.push(`${HEADLINES[domain]}: individual support could not be checked for ${guest.name}. No support is claimed for that guest.`); }
         }
       } else warnings.push(`${HEADLINES[domain]}: individual support checks were skipped to respect the request budget or deadline. No guest affinity is inferred.`);
-      const picks: Pick[] = group.candidates.map((entity, groupIndex): Pick => {
+      const ranked: Pick[] = group.candidates.map((entity, groupIndex): Pick => {
         const supporting = guests.filter((guest) => guestResults.get(guest.name)?.some((e) => e.entity_id.toLowerCase() === entity.entity_id.toLowerCase()));
         const rankScore = supporting.length + (1 / (groupIndex + 1) + supporting.reduce((sum, guest) => {
           const rank = guestResults.get(guest.name)!.findIndex((e) => e.entity_id.toLowerCase() === entity.entity_id.toLowerCase());
@@ -147,10 +152,13 @@ export async function buildPlan(
             ? `Returned in the group query and in separate Qloo results for ${attribution}. Retrieval overlap: ${supporting.length} of ${guests.length} guests; ${guestResults.size} individual checks completed. This is not a measured affinity probability.`
             : `Returned by Qloo for the combined resolved taste signals. No individual guest support was established for this pick; ${guestResults.size} of ${guests.length} guest checks completed.${unresolvedSeeds.length ? " Some seeds were unresolved." : ""}`,
           affinity: null, bridgingGuests: supporting.map((g) => g.name),
+          guestEvidence: guests.map((guest) => ({ guest: guest.name, state: supporting.some((g) => g.name === guest.name) ? "supported" : guestResults.has(guest.name) ? "checked-not-retrieved" : "unchecked" })),
           support: { kind: "qloo-retrieval", count: supporting.length, total: guests.length, checked: guestResults.size, rankScore },
         };
-      }).sort((a, b) => b.support!.rankScore - a.support!.rankScore).slice(0, 3);
-      domains.push({ domain, headline: HEADLINES[domain], source: "qloo", picks });
+      }).sort((a, b) => b.support!.rankScore - a.support!.rankScore);
+      const { picks, coverage } = selectGroupCoverage(ranked, guests.map((guest) => guest.name));
+      const reason = describeCoverage(coverage, guests.length);
+      domains.push({ domain, headline: HEADLINES[domain], source: "qloo", picks, coverage, reason });
     }
     domains.sort((a, b) => DOMAINS.indexOf(a.domain) - DOMAINS.indexOf(b.domain));
     const mode = domains.every((d) => d.source === "qloo") ? "qloo" : "sample";

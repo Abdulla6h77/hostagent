@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { QlooCall } from "@/types";
 import { createPlannerBudget } from "./qloo-planner-budget";
+import { createSharedQuota, LiveAccessError, type AttemptQuota } from "./live-protection";
 
 import {
   EntitiesSchema, TagsSchema, unwrapQlooResponse, searchParameters, tagParameters, insightParameters,
@@ -13,17 +14,19 @@ export interface CompareResult { compatibility_score?: number; analysis?: string
 export interface QlooClient {
   available: boolean;
   remainingAttempts?: () => number;
+  liveAccessFailure?: () => "shared-budget" | "live-unavailable" | undefined;
   searchEntities(query: string, types?: string[]): Promise<SearchResult>;
   searchTags(q: string): Promise<TagsResult>;
   getInsights(input: InsightsInput): Promise<InsightsResult>;
   compareEntities(a: string, b: string): Promise<CompareResult>;
 }
 export class QlooError extends Error {
-  constructor(public readonly code: "disabled" | "timeout" | "network" | "rate-limit" | "upstream" | "contract" | "configuration" | "budget") {
+  constructor(public readonly code: "disabled" | "timeout" | "network" | "rate-limit" | "upstream" | "contract" | "configuration" | "budget" | "shared-budget" | "live-unavailable") {
     super(`Qloo request unavailable (${code}).`);
   }
 }
 interface Options {
+  quota?: AttemptQuota;
   key?: string; baseUrl?: string; enabled?: boolean; fetcher?: typeof fetch;
   calls?: QlooCall[]; signal?: AbortSignal; timeoutMs?: number; backoffMs?: number; maxAttempts?: number; retries?: 0 | 1;
 }
@@ -51,6 +54,8 @@ export function createQlooClient(options: Options = {}): QlooClient {
   const retries = options.retries ?? Number(process.env.QLOO_MAX_RETRIES ?? 1);
   const durable = process.env.QLOO_PLANNER_VALIDATION === "true" ? createPlannerBudget(process.env.QLOO_PLANNER_LEDGER_FILE ?? "") : undefined;
   let attempts = 0;
+  const quota = options.quota ?? createSharedQuota();
+  let blocked: "shared-budget" | "live-unavailable" | undefined;
   function metric(endpoint: string) {
     let entry = calls.find((c) => c.endpoint === endpoint);
     if (!entry) { entry = { endpoint, count: 0, cacheHits: 0 }; calls.push(entry); }
@@ -58,6 +63,7 @@ export function createQlooClient(options: Options = {}): QlooClient {
   }
   async function request<T>(endpoint: string, params: Record<string, string>, schema: z.ZodType<T, z.ZodTypeDef, unknown>): Promise<T> {
     if (!available) throw new QlooError("disabled");
+    if (blocked) throw new QlooError(blocked);
     if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100 || ![0, 1].includes(retries) || (durable && retries !== 0)) throw new QlooError("configuration");
     let root: URL;
     try { root = new URL(base); } catch { throw new QlooError("configuration"); }
@@ -91,11 +97,18 @@ export function createQlooClient(options: Options = {}): QlooClient {
       let fingerprints: string[] | undefined;
       try {
         if (attempts >= maxAttempts) throw new QlooError("budget");
+        attempts++; // Reserve local capacity before any asynchronous shared reservation.
         if (durable) {
           try { reservation = await durable.reserve(endpoint, params); }
           catch { throw new QlooError("budget"); }
         }
-        attempts++;
+        try { await quota.reserve(controller.signal); }
+        catch (error) {
+          blocked = error instanceof LiveAccessError && error.code === "exhausted" ? "shared-budget" : "live-unavailable";
+          throw new QlooError(blocked);
+        }
+        if (blocked) throw new QlooError(blocked);
+        if (controller.signal.aborted) throw new QlooError("timeout");
         metric(endpoint).count++;
         const response = await fetcher(url, {
           headers: { "X-Api-Key": key, Accept: "application/json" },
@@ -142,6 +155,7 @@ export function createQlooClient(options: Options = {}): QlooClient {
   }
   return {
     available,
+    liveAccessFailure: () => blocked,
     remainingAttempts: () => Math.max(0, maxAttempts - attempts),
     searchEntities: (query, types) => request("/search", searchParameters(query, types), EntitiesSchema),
     searchTags: (query) => request("/v2/tags", tagParameters(query), TagsSchema),

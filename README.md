@@ -1,6 +1,6 @@
 # Host Agent
 
-Plan music, food, film, and aesthetic inspiration around the tastes of 2–4 guests. Add 3–5 tastes per guest and compare recommendations with a fixed generic baseline.
+Plan music, food, film, and aesthetic inspiration around the tastes of 2â€“4 guests. Add 3â€“5 tastes per guest and compare recommendations with a fixed generic baseline.
 
 The actual production planner returned all four domains LIVE in 13.015 seconds during a controlled local test. See [validation evidence](docs/QLOO-FINAL-LIVE-RETEST.md). This verifies that run, not hosted reliability or deployment readiness.
 
@@ -45,7 +45,7 @@ The credential previously exposed in original project notes requires manual revo
 - **SAMPLE**: synthetic ideas, including honest per-domain fallback when upstream requests fail.
 - **BASELINE**: fixed generic suggestions, independent of tastes and without Qloo calls.
 
-Genre and cuisine tags and exact entity-name matches resolve taste seeds. Primary insights run with at most two concurrent requests and staggered starts. Lookups allow 10 seconds, insights 20 seconds, within a 45-second planner deadline. Individual support checks follow all primary requests if budget allows. Retrieval overlap is not an affinity probability; unchecked guests are not attributed. City and occasion are context only; venue location, dietary suitability, and availability are not verified.
+Genre and cuisine tags and exact entity-name matches resolve taste seeds. Primary insights run with at most two concurrent requests and staggered starts. Lookups allow 10 seconds, insights 20 seconds, within a 45-second planner deadline. Individual support checks follow all primary requests if budget allows. Retrieval overlap is not an affinity probability; unchecked guests are not attributed. The explicit SAMPLE demo bypasses live requests even when credentials are configured. City and occasion are context only; venue location, dietary suitability, and availability are not verified.
 
 ## Project structure
 

@@ -28,12 +28,13 @@ function failureReason(error: unknown) {
   return "Recommendations are temporarily unavailable for this domain.";
 }
 export async function buildPlan(
-  guests: Guest[], options: { occasion?: string; city?: string; useQloo: boolean }, dependencies: Dependencies = {},
+  guests: Guest[], options: { occasion?: string; city?: string; useQloo: boolean; sampleOnly?: boolean }, dependencies: Dependencies = {},
 ): Promise<PlanResponse> {
   const calls: QlooCall[] = [];
   const context = { occasion: options.occasion || undefined, city: options.city || undefined };
   const base = { qlooCalls: calls, generatedAt: new Date().toISOString(), context, unresolvedSeeds: [] };
   if (!options.useQloo) return { ...base, context: {}, mode: "baseline", domains: structuredClone(BASELINE_PLAN), warnings: [] };
+  if (options.sampleOnly) return { ...base, mode: "sample", domains: getMockPlan(guests, "SAMPLE demo: curated ideas, no live requests."), warnings: ["SAMPLE demo uses curated ideas, not live Qloo results."] };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), dependencies.budgetMs ?? 45_000);
   const client = dependencies.client ?? createQlooClient({ calls, signal: controller.signal });

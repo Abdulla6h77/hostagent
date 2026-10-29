@@ -60,3 +60,35 @@ describe("plan API, offline", () => {
     expect(await response.text()).not.toContain("private upstream detail"); expect(log).not.toHaveBeenCalled();
   });
 });
+
+
+describe("guest counts and explicit offline demo", () => {
+  const group = (count: number) => Array.from({ length: count }, (_, i) => ({ name: `Guest ${i + 1}`, seeds: ["jazz", "Inception", "Italian food"] }));
+  it.each([2, 3, 4])("accepts %i complete guests and makes no network calls in demo mode", async (count) => {
+    vi.stubEnv("QLOO_LIVE_ENABLED", "true");
+    vi.stubEnv("QLOO_API_KEY", "unit-test-placeholder");
+    vi.stubEnv("QLOO_PLANNER_VALIDATION", "true");
+    const response = await POST(request({ guests: group(count), sampleOnly: true }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.mode).toBe("sample");
+    expect(body.domains.map((domain: { source: string }) => domain.source)).toEqual(["sample", "sample", "sample", "sample"]);
+    expect(body.qlooCalls).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each([1, 5])("rejects %i guests", async (count) => {
+    expect((await POST(request({ guests: group(count), sampleOnly: true }))).status).toBe(400);
+  });
+  it("identifies an incomplete fourth guest without rejecting a complete three-person group", async () => {
+    const response = await POST(request({ guests: [...group(3), { name: "", seeds: [] }], sampleOnly: true }));
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.details.map((detail: { path: string }) => detail.path)).toEqual(expect.arrayContaining(["guests.3.name", "guests.3.seeds"]));
+  });
+  it("requires a third committed taste and distinct names", async () => {
+    const incomplete = group(3); incomplete[2].seeds.pop();
+    expect((await POST(request({ guests: incomplete }))).status).toBe(400);
+    const duplicate = group(3); duplicate[2].name = duplicate[0].name;
+    expect((await POST(request({ guests: duplicate }))).status).toBe(400);
+  });
+});
